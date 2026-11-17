@@ -8,12 +8,10 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #FFFDF9; color: #3D2314; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #FFFDF9; color: #3D2314; margin: 0; }
     h1, h2, h3, .font-serif { font-family: 'Playfair Display', serif; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-    @keyframes pulse-soft { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
-    .animate-pulse-soft { animation: pulse-soft 2s infinite ease-in-out; }
     @media print {
       body * { visibility: hidden; }
       #print-receipt-area, #print-receipt-area * { visibility: visible; }
@@ -65,7 +63,7 @@
       useSchedule: false,
       openTime: "09:00",
       closeTime: "19:00",
-      closedDays: [1], // 0=Dom, 1=Seg...
+      closedDays: [1],
       pushEnabled: false
     };
 
@@ -106,8 +104,8 @@
       }
     ];
 
-    // --- ESTADO DA APLICAÇÃO ---
-    let state = {
+    // --- ESTADO GLOBAL EXPOSTO NO WINDOW ---
+    window.state = {
       settings: { ...DEFAULT_SETTINGS },
       categories: [...DEFAULT_CATEGORIES],
       products: [...DEFAULT_PRODUCTS],
@@ -115,19 +113,19 @@
       cart: [],
       selectedCategory: "all",
       searchQuery: "",
-      view: "store", // 'store' | 'admin'
-      adminTab: "orders", // 'orders' | 'products' | 'categories' | 'settings'
+      view: "store",
+      adminTab: "orders",
       isAdminAuthenticated: false,
       isCartOpen: false,
-      cartStep: "items", // 'items' | 'checkout'
+      cartStep: "items",
       checkoutForm: {
         name: "",
         phone: "",
-        deliveryType: "delivery", // 'delivery' | 'pickup'
+        deliveryType: "delivery",
         address: "",
         neighborhood: "",
         complement: "",
-        paymentMethod: "pix", // 'pix' | 'card' | 'cash'
+        paymentMethod: "pix",
         changeFor: "",
         notes: ""
       },
@@ -143,6 +141,7 @@
       lastOrderCount: null
     };
 
+    const state = window.state;
     let pixTimerInterval = null;
 
     // --- INICIALIZAÇÃO DO FIREBASE E SINCRONIZAÇÃO EM TEMPO REAL ---
@@ -153,7 +152,6 @@
           if (!user) return;
           state.dbConnected = true;
 
-          // 1. Configurações da Loja
           const settingsRef = doc(db, "stores", APP_ID, "config", "settings");
           const settingsSnap = await getDoc(settingsRef);
           if (!settingsSnap.exists()) {
@@ -162,11 +160,10 @@
           onSnapshot(settingsRef, (snap) => {
             if (snap.exists()) {
               state.settings = { ...DEFAULT_SETTINGS, ...snap.data() };
-              render();
+              window.render();
             }
           });
 
-          // 2. Categorias
           const catRef = doc(db, "stores", APP_ID, "config", "categories");
           const catSnap = await getDoc(catRef);
           if (!catSnap.exists()) {
@@ -175,11 +172,10 @@
           onSnapshot(catRef, (snap) => {
             if (snap.exists() && Array.isArray(snap.data().list)) {
               state.categories = snap.data().list;
-              render();
+              window.render();
             }
           });
 
-          // 3. Produtos
           const prodCol = collection(db, "stores", APP_ID, "products");
           onSnapshot(prodCol, async (snapshot) => {
             if (snapshot.empty && !localStorage.getItem("ds_seeded")) {
@@ -190,70 +186,68 @@
               return;
             }
             state.products = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-            render();
+            window.render();
           });
 
-          // 4. Pedidos em Tempo Real
           const ordersCol = collection(db, "stores", APP_ID, "orders");
           onSnapshot(ordersCol, (snapshot) => {
             const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
             if (state.lastOrderCount !== null && list.length > state.lastOrderCount) {
-              const newest = list[0];
-              triggerNewOrderAlert(newest);
+              triggerNewOrderAlert(list[0]);
             }
             state.lastOrderCount = list.length;
             state.orders = list;
-            render();
+            window.render();
           });
         });
       } catch (err) {
         console.error("Erro ao conectar ao Firebase:", err);
-        showToast("Modo offline ativo. Verifique as regras do Firestore.", "error");
+        window.showToast("Modo offline ativo. Verifique o login Anônimo no Firebase.", "error");
       }
     }
 
     // --- FUNÇÕES DE PERSISTÊNCIA NA NUVEM ---
-    async function saveSettingsToCloud(newSettings) {
+    window.saveSettingsToCloud = async (newSettings) => {
       state.settings = { ...state.settings, ...newSettings };
-      render();
+      window.render();
       try {
         await setDoc(doc(db, "stores", APP_ID, "config", "settings"), state.settings);
-        showToast("Configurações salvas na nuvem!");
+        window.showToast("Configurações salvas na nuvem!");
       } catch (e) {
-        showToast("Erro ao salvar configurações: " + e.message, "error");
+        window.showToast("Erro ao salvar configurações: " + e.message, "error");
       }
-    }
+    };
 
-    async function saveCategoriesToCloud(newCategories) {
+    window.saveCategoriesToCloud = async (newCategories) => {
       state.categories = newCategories;
-      render();
+      window.render();
       try {
         await setDoc(doc(db, "stores", APP_ID, "config", "categories"), { list: newCategories });
       } catch (e) {
-        showToast("Erro ao atualizar categorias.", "error");
+        window.showToast("Erro ao atualizar categorias.", "error");
       }
-    }
+    };
 
-    async function saveProductToCloud(product) {
+    window.saveProductToCloud = async (product) => {
       try {
         const id = product.id || "prod-" + Date.now();
         await setDoc(doc(db, "stores", APP_ID, "products", id), { ...product, id });
-        showToast("Produto salvo com sucesso!");
+        window.showToast("Produto salvo com sucesso!");
       } catch (e) {
-        showToast("Erro ao salvar produto.", "error");
+        window.showToast("Erro ao salvar produto.", "error");
       }
-    }
+    };
 
-    async function deleteProductFromCloud(id) {
+    window.deleteProductFromCloud = async (id) => {
       try {
         await deleteDoc(doc(db, "stores", APP_ID, "products", id));
-        showToast("Produto excluído.");
+        window.showToast("Produto excluído.");
       } catch (e) {
-        showToast("Erro ao excluir produto.", "error");
+        window.showToast("Erro ao excluir produto.", "error");
       }
-    }
+    };
 
     async function createOrderInCloud(order) {
       try {
@@ -265,23 +259,23 @@
       }
     }
 
-    async function updateOrderStatusInCloud(orderId, status) {
+    window.updateOrderStatusInCloud = async (orderId, status) => {
       try {
         await updateDoc(doc(db, "stores", APP_ID, "orders", orderId), { status });
-        showToast("Status atualizado!");
+        window.showToast("Status atualizado!");
       } catch (e) {
-        showToast("Erro ao atualizar pedido.", "error");
+        window.showToast("Erro ao atualizar pedido.", "error");
       }
-    }
+    };
 
-    async function deleteOrderFromCloud(orderId) {
+    window.deleteOrderFromCloud = async (orderId) => {
       try {
         await deleteDoc(doc(db, "stores", APP_ID, "orders", orderId));
-        showToast("Pedido removido.");
+        window.showToast("Pedido removido.");
       } catch (e) {
-        showToast("Erro ao remover pedido.", "error");
+        window.showToast("Erro ao remover pedido.", "error");
       }
-    }
+    };
 
     // --- NOTIFICAÇÕES PUSH E SOM ---
     function playNotificationSound() {
@@ -304,7 +298,7 @@
     function triggerNewOrderAlert(order) {
       if (!state.isAdminAuthenticated) return;
       playNotificationSound();
-      showToast(`Novo pedido de ${order.customerName} (${formatCurrency(order.total)})!`);
+      window.showToast(`Novo pedido de ${order.customerName} (${formatCurrency(order.total)})!`);
       if ("Notification" in window && Notification.permission === "granted") {
         new Notification("Novo Pedido - " + state.settings.storeName, {
           body: `${order.customerName} • ${formatCurrency(order.total)}`,
@@ -315,18 +309,18 @@
 
     window.requestPushPermission = async () => {
       if (!("Notification" in window)) {
-        showToast("Seu navegador não suporta notificações push.", "error");
+        window.showToast("Seu navegador não suporta notificações push.", "error");
         return;
       }
       const perm = await Notification.requestPermission();
       if (perm === "granted") {
-        await saveSettingsToCloud({ pushEnabled: true });
+        await window.saveSettingsToCloud({ pushEnabled: true });
         playNotificationSound();
         new Notification("Notificações Ativadas!", {
           body: "Você receberá alertas sempre que chegar um novo pedido."
         });
       } else {
-        showToast("Permissão de notificação negada no navegador.", "error");
+        window.showToast("Permissão de notificação negada no navegador.", "error");
       }
     };
 
@@ -335,16 +329,16 @@
       return Number(val || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
     }
 
-    function showToast(msg, type = "success") {
+    window.showToast = (msg, type = "success") => {
       state.toast = { msg, type };
-      render();
+      window.render();
       setTimeout(() => {
         if (state.toast && state.toast.msg === msg) {
           state.toast = null;
-          render();
+          window.render();
         }
       }, 3500);
-    }
+    };
 
     function isStoreOpen() {
       const s = state.settings;
@@ -358,9 +352,25 @@
     }
 
     // --- AÇÕES DO CARRINHO E CHECKOUT ---
+    window.openCart = () => {
+      state.isCartOpen = true;
+      state.cartStep = "items";
+      window.render();
+    };
+
+    window.closeCart = () => {
+      state.isCartOpen = false;
+      window.render();
+    };
+
+    window.toggleAdminView = () => {
+      state.view = state.view === "admin" ? "store" : "admin";
+      window.render();
+    };
+
     window.addToCart = (productId) => {
       if (!isStoreOpen()) {
-        showToast("A loja está fechada no momento.", "error");
+        window.showToast("A loja está fechada no momento.", "error");
         return;
       }
       const prod = state.products.find(p => p.id === productId);
@@ -371,8 +381,8 @@
       } else {
         state.cart.push({ product: prod, qty: 1 });
       }
-      showToast(`${prod.name} adicionado à sacola!`);
-      render();
+      window.showToast(`${prod.name} adicionado à sacola!`);
+      window.render();
     };
 
     window.updateCartQty = (productId, delta) => {
@@ -383,7 +393,7 @@
         state.cart.splice(idx, 1);
       }
       if (state.cart.length === 0) state.cartStep = "items";
-      render();
+      window.render();
     };
 
     function getCartTotals() {
@@ -395,22 +405,22 @@
     window.proceedToCheckout = () => {
       const { subtotal } = getCartTotals();
       if (subtotal < Number(state.settings.minOrder || 0)) {
-        showToast(`Pedido mínimo de ${formatCurrency(state.settings.minOrder)}`, "error");
+        window.showToast(`Pedido mínimo de ${formatCurrency(state.settings.minOrder)}`, "error");
         return;
       }
       state.cartStep = "checkout";
-      render();
+      window.render();
     };
 
     window.submitOrder = async (e) => {
       e.preventDefault();
       const f = state.checkoutForm;
       if (!f.name.trim() || !f.phone.trim()) {
-        showToast("Preencha seu nome e WhatsApp.", "error");
+        window.showToast("Preencha seu nome e WhatsApp.", "error");
         return;
       }
       if (f.deliveryType === "delivery" && (!f.address.trim() || !f.neighborhood.trim())) {
-        showToast("Preencha o endereço completo para entrega.", "error");
+        window.showToast("Preencha o endereço completo para entrega.", "error");
         return;
       }
 
@@ -448,7 +458,7 @@
         expired: false,
         orderData: orderPayload
       };
-      render();
+      window.render();
 
       pixTimerInterval = setInterval(() => {
         if (!state.pixModal.open) {
@@ -459,7 +469,7 @@
           clearInterval(pixTimerInterval);
           state.pixModal.secondsLeft = 0;
           state.pixModal.expired = true;
-          render();
+          window.render();
         } else {
           state.pixModal.secondsLeft -= 1;
           const timerEl = document.getElementById("pix-countdown-display");
@@ -475,7 +485,7 @@
     window.closePixModalToMenu = () => {
       if (pixTimerInterval) clearInterval(pixTimerInterval);
       state.pixModal = { open: false, secondsLeft: 300, expired: false, orderData: null };
-      render();
+      window.render();
     };
 
     window.confirmPixPayment = async () => {
@@ -514,9 +524,9 @@
       state.cart = [];
       state.cartStep = "items";
       state.isCartOpen = false;
-      render();
+      window.render();
 
-      showToast(isPixConfirmed ? "Pedido registrado! Envie o comprovante no WhatsApp." : "Pedido enviado com sucesso!");
+      window.showToast(isPixConfirmed ? "Pedido registrado! Envie o comprovante no WhatsApp." : "Pedido enviado com sucesso!");
       const cleanPhone = (state.settings.whatsapp || "").replace(/\D/g, "");
       const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
       window.open(url, "_blank");
@@ -549,7 +559,7 @@
     };
 
     // --- RENDERIZAÇÃO PRINCIPAL ---
-    function render() {
+    window.render = () => {
       const root = document.getElementById("app");
       const open = isStoreOpen();
 
@@ -568,14 +578,14 @@
           </div>
         ` : ""}
       `;
-      lucide.createIcons();
-    }
+      if (window.lucide) window.lucide.createIcons();
+    };
 
     function renderHeader(open) {
       const totalItems = state.cart.reduce((acc, i) => acc + i.qty, 0);
       return `
-        <header class="sticky top-0 z-30 bg-[#FFFDF9]/95 backdrop-blur border-b border-amber-100">
-          <div class="max-w-6xl mx-auto px-4 h-20 flex items-center justify-between gap-4">
+        <header class="sticky top-0 z-30 bg-[#FFFDF9] border-b border-amber-100 shadow-sm">
+          <div class="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3 cursor-pointer" onclick="state.view='store'; render();">
               ${state.settings.logoUrl
                 ? `<img src="${state.settings.logoUrl}" alt="Logo" class="w-12 h-12 rounded-full object-cover border-2 border-amber-300 shadow-sm" />`
@@ -583,8 +593,8 @@
               }
               <div>
                 <h1 class="text-xl font-bold text-[#3D2314] leading-tight">${state.settings.storeName}</h1>
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="inline-flex items-center gap-1 font-semibold ${open ? "text-emerald-700" : "text-red-600"}">
+                <div class="flex items-center gap-2 text-xs mt-0.5">
+                  <span class="inline-flex items-center gap-1.5 font-semibold ${open ? "text-emerald-700" : "text-red-600"}">
                     <span class="w-2 h-2 rounded-full ${open ? "bg-emerald-500 animate-pulse" : "bg-red-500"}"></span>
                     ${open ? "Aberto agora" : "Fechado no momento"}
                   </span>
@@ -592,18 +602,18 @@
               </div>
             </div>
 
-            <div class="flex items-center gap-2">
-              <button onclick="state.view = state.view === 'admin' ? 'store' : 'admin'; render();"
-                class="px-3.5 py-2 rounded-xl text-xs font-semibold border border-amber-200 text-[#3D2314] hover:bg-amber-50 transition flex items-center gap-1.5">
+            <div class="flex items-center gap-2.5">
+              <button type="button" onclick="toggleAdminView()"
+                class="px-3.5 py-2.5 rounded-xl text-xs font-semibold border border-amber-200 bg-white text-[#3D2314] hover:bg-amber-50 transition flex items-center gap-1.5 cursor-pointer">
                 <i data-lucide="${state.view === "admin" ? "store" : "lock"}" class="w-3.5 h-3.5"></i>
                 <span>${state.view === "admin" ? "Ver Cardápio" : "Área do Lojista"}</span>
               </button>
 
               ${state.view === "store" ? `
-                <button onclick="state.isCartOpen = true; state.cartStep = 'items'; render();"
-                  class="relative bg-[#3D2314] hover:bg-[#52301C] text-amber-50 px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 shadow-md transition">
+                <button type="button" onclick="openCart()"
+                  class="relative bg-[#3D2314] hover:bg-[#52301C] text-amber-50 px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 shadow-md transition cursor-pointer">
                   <i data-lucide="shopping-bag" class="w-4 h-4"></i>
-                  <span class="hidden sm:inline">Sacola</span>
+                  <span>Sacola</span>
                   ${totalItems > 0 ? `<span class="bg-amber-400 text-[#3D2314] text-xs font-bold px-2 py-0.5 rounded-full">${totalItems}</span>` : ""}
                 </button>
               ` : ""}
@@ -623,7 +633,6 @@
 
       return `
         <div class="space-y-6">
-          <!-- Banner -->
           <div class="bg-gradient-to-r from-[#3D2314] to-[#5C3620] rounded-3xl p-6 sm:p-8 text-amber-50 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
               <p class="text-amber-300 text-xs uppercase tracking-widest font-semibold mb-1">${state.settings.tagline}</p>
@@ -632,16 +641,15 @@
             </div>
           </div>
 
-          <!-- Busca e Categorias -->
           <div class="flex flex-col sm:flex-row gap-3 justify-between items-stretch sm:items-center">
             <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-              <button onclick="state.selectedCategory='all'; render();"
-                class="px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition ${state.selectedCategory === "all" ? "bg-[#3D2314] text-amber-50 shadow" : "bg-amber-100/70 text-[#3D2314] hover:bg-amber-200/70"}">
+              <button type="button" onclick="state.selectedCategory='all'; render();"
+                class="px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition cursor-pointer ${state.selectedCategory === "all" ? "bg-[#3D2314] text-amber-50 shadow" : "bg-amber-100/70 text-[#3D2314] hover:bg-amber-200/70"}">
                 Todos os Produtos
               </button>
               ${state.categories.map(c => `
-                <button onclick="state.selectedCategory='${c.id}'; render();"
-                  class="px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition ${state.selectedCategory === c.id ? "bg-[#3D2314] text-amber-50 shadow" : "bg-amber-100/70 text-[#3D2314] hover:bg-amber-200/70"}">
+                <button type="button" onclick="state.selectedCategory='${c.id}'; render();"
+                  class="px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition cursor-pointer ${state.selectedCategory === c.id ? "bg-[#3D2314] text-amber-50 shadow" : "bg-amber-100/70 text-[#3D2314] hover:bg-amber-200/70"}">
                   ${c.name}
                 </button>
               `).join("")}
@@ -655,7 +663,6 @@
             </div>
           </div>
 
-          <!-- Grade de Produtos -->
           ${filtered.length === 0 ? `
             <div class="text-center py-16 bg-white rounded-3xl border border-amber-100">
               <p class="text-amber-900/60 font-medium">Nenhum doce encontrado nesta categoria.</p>
@@ -671,12 +678,12 @@
                   <div class="p-5 flex-1 flex flex-col justify-between">
                     <div>
                       <h3 class="text-lg font-bold text-[#3D2314] mb-1">${p.name}</h3>
-                      <p class="text-xs text-[#3D2314]/70 line-clamp-3 mb-4">${p.description || ""}</p>
+                      <p class="text-xs text-[#3D2314]/70 mb-4">${p.description || ""}</p>
                     </div>
                     <div class="flex items-center justify-between pt-3 border-t border-amber-50">
                       <span class="text-lg font-bold text-amber-800">${formatCurrency(p.price)}</span>
-                      <button onclick="addToCart('${p.id}')" ${p.soldOut || !open ? "disabled" : ""}
-                        class="px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${p.soldOut || !open ? "bg-gray-200 text-gray-500 cursor-not-allowed" : "bg-[#3D2314] hover:bg-[#52301C] text-amber-50 shadow-sm"}">
+                      <button type="button" onclick="addToCart('${p.id}')" ${p.soldOut || !open ? "disabled" : ""}
+                        class="px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${p.soldOut || !open ? "bg-gray-200 text-gray-500 cursor-not-allowed" : "bg-[#3D2314] hover:bg-[#52301C] text-amber-50 shadow-sm"}">
                         <i data-lucide="plus" class="w-4 h-4"></i>
                         <span>${p.soldOut ? "Esgotado" : "Adicionar"}</span>
                       </button>
@@ -695,18 +702,18 @@
       const totals = getCartTotals();
 
       return `
-        <div class="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs flex justify-end">
+        <div class="fixed inset-0 z-50 bg-black/50 flex justify-end" onclick="if(event.target === this) closeCart();">
           <div class="bg-[#FFFDF9] w-full max-w-md h-full flex flex-col shadow-2xl">
-            <div class="p-5 border-b border-amber-100 flex items-center justify-between">
+            <div class="p-5 border-b border-amber-100 flex items-center justify-between bg-white">
               <div class="flex items-center gap-2">
                 ${state.cartStep === "checkout" ? `
-                  <button onclick="state.cartStep='items'; render();" class="p-1.5 rounded-lg hover:bg-amber-100">
+                  <button type="button" onclick="state.cartStep='items'; render();" class="p-1.5 rounded-lg hover:bg-amber-100 cursor-pointer">
                     <i data-lucide="arrow-left" class="w-5 h-5"></i>
                   </button>
                 ` : ""}
                 <h2 class="text-lg font-bold">${state.cartStep === "items" ? "Sua Sacola" : "Finalizar Pedido"}</h2>
               </div>
-              <button onclick="state.isCartOpen=false; render();" class="p-1.5 rounded-lg hover:bg-amber-100">
+              <button type="button" onclick="closeCart()" class="p-1.5 rounded-lg hover:bg-amber-100 cursor-pointer">
                 <i data-lucide="x" class="w-5 h-5"></i>
               </button>
             </div>
@@ -720,15 +727,15 @@
               ` : state.cartStep === "items" ? `
                 <div class="space-y-4">
                   ${state.cart.map(item => `
-                    <div class="flex items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-amber-100">
+                    <div class="flex items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-amber-100 shadow-sm">
                       <div class="min-w-0 flex-1">
                         <h4 class="font-bold text-sm truncate">${item.product.name}</h4>
                         <p class="text-xs text-amber-800 font-semibold">${formatCurrency(item.product.price * item.qty)}</p>
                       </div>
                       <div class="flex items-center gap-2 bg-amber-50 rounded-xl p-1">
-                        <button onclick="updateCartQty('${item.product.id}', -1)" class="w-7 h-7 rounded-lg bg-white shadow-2xs flex items-center justify-center font-bold">-</button>
+                        <button type="button" onclick="updateCartQty('${item.product.id}', -1)" class="w-7 h-7 rounded-lg bg-white shadow flex items-center justify-center font-bold cursor-pointer">-</button>
                         <span class="text-sm font-bold w-5 text-center">${item.qty}</span>
-                        <button onclick="updateCartQty('${item.product.id}', 1)" class="w-7 h-7 rounded-lg bg-white shadow-2xs flex items-center justify-center font-bold">+</button>
+                        <button type="button" onclick="updateCartQty('${item.product.id}', 1)" class="w-7 h-7 rounded-lg bg-white shadow flex items-center justify-center font-bold cursor-pointer">+</button>
                       </div>
                     </div>
                   `).join("")}
@@ -750,11 +757,11 @@
                     <label class="block font-semibold mb-1">Como deseja receber?</label>
                     <div class="grid grid-cols-2 gap-2">
                       <button type="button" onclick="state.checkoutForm.deliveryType='delivery'; render();"
-                        class="py-2.5 rounded-xl font-semibold border ${state.checkoutForm.deliveryType === "delivery" ? "bg-[#3D2314] text-white border-[#3D2314]" : "bg-white border-amber-200"}">
+                        class="py-2.5 rounded-xl font-semibold border cursor-pointer ${state.checkoutForm.deliveryType === "delivery" ? "bg-[#3D2314] text-white border-[#3D2314]" : "bg-white border-amber-200"}">
                         Entrega (${formatCurrency(state.settings.deliveryFee)})
                       </button>
                       <button type="button" onclick="state.checkoutForm.deliveryType='pickup'; render();"
-                        class="py-2.5 rounded-xl font-semibold border ${state.checkoutForm.deliveryType === "pickup" ? "bg-[#3D2314] text-white border-[#3D2314]" : "bg-white border-amber-200"}">
+                        class="py-2.5 rounded-xl font-semibold border cursor-pointer ${state.checkoutForm.deliveryType === "pickup" ? "bg-[#3D2314] text-white border-[#3D2314]" : "bg-white border-amber-200"}">
                         Retirar no Local
                       </button>
                     </div>
@@ -816,11 +823,11 @@
                 </div>
 
                 ${state.cartStep === "items" ? `
-                  <button onclick="proceedToCheckout()" class="w-full py-3.5 rounded-xl bg-[#3D2314] hover:bg-[#52301C] text-amber-50 font-bold text-sm shadow-md transition">
+                  <button type="button" onclick="proceedToCheckout()" class="w-full py-3.5 rounded-xl bg-[#3D2314] hover:bg-[#52301C] text-amber-50 font-bold text-sm shadow-md transition cursor-pointer">
                     Finalizar Pedido
                   </button>
                 ` : `
-                  <button type="submit" form="checkout-form" class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md transition">
+                  <button type="submit" form="checkout-form" class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md transition cursor-pointer">
                     ${state.checkoutForm.paymentMethod === "pix" ? "Gerar Chave Pix" : "Enviar Pedido no WhatsApp"}
                   </button>
                 `}
@@ -837,7 +844,7 @@
       const s = String(state.pixModal.secondsLeft % 60).padStart(2, "0");
 
       return `
-        <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl text-center space-y-5 border border-amber-100">
             ${state.pixModal.expired ? `
               <div class="w-16 h-16 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
@@ -845,7 +852,7 @@
               </div>
               <h3 class="text-2xl font-bold text-red-600">Tempo Esgotado</h3>
               <p class="text-sm text-gray-600">O prazo de 5 minutos para finalizar o pagamento Pix expirou. Volte ao cardápio para refazer seu pedido.</p>
-              <button onclick="closePixModalToMenu()" class="w-full py-3.5 rounded-xl bg-[#3D2314] text-amber-50 font-bold text-sm">
+              <button type="button" onclick="closePixModalToMenu()" class="w-full py-3.5 rounded-xl bg-[#3D2314] text-amber-50 font-bold text-sm cursor-pointer">
                 Voltar ao Cardápio
               </button>
             ` : `
@@ -868,8 +875,8 @@
                   <span class="text-xs text-amber-800/70 block">Chave Pix:</span>
                   <div class="flex items-center justify-between gap-2 mt-1">
                     <code class="bg-white px-3 py-1.5 rounded-lg border border-amber-200 font-mono text-xs flex-1 truncate">${state.settings.pixKey}</code>
-                    <button onclick="navigator.clipboard.writeText('${state.settings.pixKey}'); showToast('Chave Pix copiada!');"
-                      class="px-3 py-1.5 rounded-lg bg-[#3D2314] text-white text-xs font-semibold">
+                    <button type="button" onclick="navigator.clipboard.writeText('${state.settings.pixKey}'); showToast('Chave Pix copiada!');"
+                      class="px-3 py-1.5 rounded-lg bg-[#3D2314] text-white text-xs font-semibold cursor-pointer">
                       Copiar
                     </button>
                   </div>
@@ -881,10 +888,10 @@
               </p>
 
               <div class="space-y-2">
-                <button onclick="confirmPixPayment()" class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md">
+                <button type="button" onclick="confirmPixPayment()" class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md cursor-pointer">
                   Já fiz o Pix • Enviar Comprovante
                 </button>
-                <button onclick="closePixModalToMenu()" class="w-full py-2.5 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-100">
+                <button type="button" onclick="closePixModalToMenu()" class="w-full py-2.5 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-100 cursor-pointer">
                   Cancelar
                 </button>
               </div>
@@ -908,7 +915,7 @@
             </div>
             <form onsubmit="event.preventDefault(); const v = document.getElementById('pin-input').value; if(v === state.settings.adminPin){ state.isAdminAuthenticated=true; render(); } else { showToast('PIN incorreto', 'error'); }" class="space-y-3">
               <input id="pin-input" type="password" maxlength="8" placeholder="••••" class="w-full text-center tracking-widest text-xl py-3 rounded-xl border border-amber-200" />
-              <button type="submit" class="w-full py-3 rounded-xl bg-[#3D2314] text-amber-50 font-bold text-sm">Entrar no Painel</button>
+              <button type="submit" class="w-full py-3 rounded-xl bg-[#3D2314] text-amber-50 font-bold text-sm cursor-pointer">Entrar no Painel</button>
             </form>
           </div>
         `;
@@ -924,8 +931,8 @@
                 { id: "categories", label: "Categorias", icon: "tags" },
                 { id: "settings", label: "Configurações & Horários", icon: "settings" }
               ].map(t => `
-                <button onclick="state.adminTab='${t.id}'; render();"
-                  class="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${state.adminTab === t.id ? "bg-[#3D2314] text-amber-50" : "bg-amber-50 text-[#3D2314] hover:bg-amber-100"}">
+                <button type="button" onclick="state.adminTab='${t.id}'; render();"
+                  class="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${state.adminTab === t.id ? "bg-[#3D2314] text-amber-50" : "bg-amber-50 text-[#3D2314] hover:bg-amber-100"}">
                   <i data-lucide="${t.icon}" class="w-4 h-4"></i>
                   <span>${t.label}</span>
                 </button>
@@ -964,7 +971,7 @@
                 </div>
                 <div class="space-y-3">
                   ${list.length === 0 ? `<p class="text-xs text-gray-400 text-center py-6">Nenhum pedido</p>` : list.map(o => `
-                    <div class="bg-white p-3.5 rounded-xl border border-amber-100 shadow-2xs space-y-2.5 min-w-0 break-words">
+                    <div class="bg-white p-3.5 rounded-xl border border-amber-100 shadow-sm space-y-2.5 min-w-0 break-words">
                       <div class="flex items-start justify-between gap-2">
                         <div class="min-w-0 flex-1">
                           <span class="text-xs font-bold text-amber-800">${o.code || "#PED"}</span>
@@ -982,15 +989,15 @@
                       <p class="text-xs text-gray-500"><strong>Pgto:</strong> ${(o.paymentMethod || "").toUpperCase()}</p>
 
                       <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-gray-100">
-                        <button onclick="printOrderReceipt('${o.id}')" class="px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-semibold flex items-center gap-1">
+                        <button type="button" onclick="printOrderReceipt('${o.id}')" class="px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-semibold flex items-center gap-1 cursor-pointer">
                           <i data-lucide="printer" class="w-3.5 h-3.5"></i> Comanda
                         </button>
                         ${col.next ? `
-                          <button onclick="updateOrderStatusInCloud('${o.id}', '${col.next}')" class="px-2.5 py-1.5 rounded-lg bg-[#3D2314] text-white text-xs font-semibold flex-1 text-center">
+                          <button type="button" onclick="updateOrderStatusInCloud('${o.id}', '${col.next}')" class="px-2.5 py-1.5 rounded-lg bg-[#3D2314] text-white text-xs font-semibold flex-1 text-center cursor-pointer">
                             ${col.nextLabel}
                           </button>
                         ` : ""}
-                        <button onclick="if(confirm('Excluir pedido?')) deleteOrderFromCloud('${o.id}')" class="p-1.5 rounded-lg text-red-600 hover:bg-red-50">
+                        <button type="button" onclick="if(confirm('Excluir pedido?')) deleteOrderFromCloud('${o.id}')" class="p-1.5 rounded-lg text-red-600 hover:bg-red-50 cursor-pointer">
                           <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                         </button>
                       </div>
@@ -1052,8 +1059,8 @@
                 <input id="p-sold" type="checkbox" ${ep?.soldOut ? "checked" : ""} /> Marcar como Esgotado
               </label>
               <div class="flex gap-2">
-                <button type="submit" class="flex-1 py-2.5 rounded-xl bg-[#3D2314] text-white font-bold text-xs">Salvar Produto</button>
-                ${ep ? `<button type="button" onclick="state.editingProduct=null; render();" class="px-3 py-2.5 rounded-xl bg-gray-100 text-xs font-semibold">Cancelar</button>` : ""}
+                <button type="submit" class="flex-1 py-2.5 rounded-xl bg-[#3D2314] text-white font-bold text-xs cursor-pointer">Salvar Produto</button>
+                ${ep ? `<button type="button" onclick="state.editingProduct=null; render();" class="px-3 py-2.5 rounded-xl bg-gray-100 text-xs font-semibold cursor-pointer">Cancelar</button>` : ""}
               </div>
             </form>
           </div>
@@ -1069,10 +1076,10 @@
                   </div>
                 </div>
                 <div class="flex gap-1 shrink-0">
-                  <button onclick="state.editingProduct = state.products.find(x => x.id === '${p.id}'); render();" class="p-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-[#3D2314]">
+                  <button type="button" onclick="state.editingProduct = state.products.find(x => x.id === '${p.id}'); render();" class="p-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-[#3D2314] cursor-pointer">
                     <i data-lucide="edit-2" class="w-4 h-4"></i>
                   </button>
-                  <button onclick="if(confirm('Excluir produto?')) deleteProductFromCloud('${p.id}')" class="p-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600">
+                  <button type="button" onclick="if(confirm('Excluir produto?')) deleteProductFromCloud('${p.id}')" class="p-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 cursor-pointer">
                     <i data-lucide="trash-2" class="w-4 h-4"></i>
                   </button>
                 </div>
@@ -1095,13 +1102,13 @@
             inp.value = '';
           " class="flex gap-2">
             <input id="new-cat-name" placeholder="Nova categoria (ex: Trufas)" class="flex-1 px-3.5 py-2 rounded-xl border border-amber-200 text-sm" />
-            <button type="submit" class="px-4 py-2 rounded-xl bg-[#3D2314] text-white text-xs font-bold">Adicionar</button>
+            <button type="submit" class="px-4 py-2 rounded-xl bg-[#3D2314] text-white text-xs font-bold cursor-pointer">Adicionar</button>
           </form>
           <div class="space-y-2">
             ${state.categories.map(c => `
               <div class="flex items-center justify-between p-3 rounded-xl bg-amber-50/60">
                 <span class="font-semibold text-sm">${c.name}</span>
-                <button onclick="saveCategoriesToCloud(state.categories.filter(x => x.id !== '${c.id}'))" class="text-red-600 text-xs font-semibold hover:underline">Remover</button>
+                <button type="button" onclick="saveCategoriesToCloud(state.categories.filter(x => x.id !== '${c.id}'))" class="text-red-600 text-xs font-semibold hover:underline cursor-pointer">Remover</button>
               </div>
             `).join("")}
           </div>
@@ -1135,7 +1142,7 @@
               <h3 class="font-bold text-lg">Configurações da Loja</h3>
               <p class="text-xs text-gray-500">Alterações sincronizam automaticamente para todos os clientes.</p>
             </div>
-            <button type="button" onclick="requestPushPermission()" class="px-4 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-[#3D2314] font-bold text-xs flex items-center gap-1.5">
+            <button type="button" onclick="requestPushPermission()" class="px-4 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-[#3D2314] font-bold text-xs flex items-center gap-1.5 cursor-pointer">
               <i data-lucide="bell-ring" class="w-4 h-4"></i>
               <span>Ativar Notificações Push</span>
             </button>
@@ -1200,7 +1207,7 @@
             </div>
           </div>
 
-          <button type="submit" class="px-6 py-3 rounded-xl bg-[#3D2314] hover:bg-[#52301C] text-amber-50 font-bold text-sm shadow">
+          <button type="submit" class="px-6 py-3 rounded-xl bg-[#3D2314] hover:bg-[#52301C] text-amber-50 font-bold text-sm shadow cursor-pointer">
             Salvar Todas as Configurações
           </button>
         </form>
@@ -1216,7 +1223,7 @@
     }
 
     // Inicializa
-    render();
+    window.render();
     initCloudSync();
   </script>
 </body>
